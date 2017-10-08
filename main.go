@@ -9,20 +9,23 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/grpc-ecosystem/grpc-gateway/runtime"
 	"golang.org/x/net/context"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/reflection"
 
+	"github.com/dhrp/grpc-rest-go-example/certificates"
 	pb "github.com/dhrp/grpc-rest-go-example/echo-proto"
-	"github.com/dhrp/grpc-rest-go-example/insecure"
-	"github.com/grpc-ecosystem/grpc-gateway/runtime"
 )
 
 const (
-	port     = 10000
+	port     = 8042
 	hostname = "localhost"
 )
+
+// join the two constants for convenience
+var serveAddress string = fmt.Sprintf("%v:%d", hostname, port)
 
 type server struct{}
 
@@ -31,7 +34,7 @@ func (s *server) Echo(ctx context.Context, in *pb.EchoMessage) (*pb.EchoMessage,
 	return &pb.EchoMessage{Value: "Hello xx " + in.Value}, nil
 }
 
-func simpleHttpHello(w http.ResponseWriter, r *http.Request) {
+func simpleHTTPHello(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte("this is a test endpoint"))
 }
 
@@ -47,21 +50,27 @@ func makeGRPCServer(certPool *x509.CertPool) *grpc.Server {
 	return s
 }
 
+// getRestMux initializes a new multiplexer, and registers each endpoint
+// - in this case only the EchoService
+
 func getRestMux(certPool *x509.CertPool, opts ...runtime.ServeMuxOption) (*runtime.ServeMux, error) {
 
-	echoEndpoint := "localhost:10000"
+	// Because we run our REST endpoint on the same port as the GRPC the address is the same.
+	upstreamGRPCServerAddress := serveAddress
 
-	// build context
+	// get context, this allows control of the connection
 	ctx := context.Background()
 
+	// These credentials are for the upstream connection to the GRPC server
 	dcreds := credentials.NewTLS(&tls.Config{
-		ServerName: echoEndpoint,
+		ServerName: upstreamGRPCServerAddress,
 		RootCAs:    certPool,
 	})
 	dopts := []grpc.DialOption{grpc.WithTransportCredentials(dcreds)}
 
+	// Which multiplexer to register on.
 	gwmux := runtime.NewServeMux()
-	err := pb.RegisterEchoServiceHandlerFromEndpoint(ctx, gwmux, echoEndpoint, dopts)
+	err := pb.RegisterEchoServiceHandlerFromEndpoint(ctx, gwmux, upstreamGRPCServerAddress, dopts)
 	if err != nil {
 		fmt.Printf("serve: %v\n", err)
 		return nil, err
@@ -83,19 +92,32 @@ func grpcHandlerFunc(grpcServer *grpc.Server, otherHandler http.Handler) http.Ha
 }
 
 func main() {
-	keyPair, certPool := insecure.GetCert()
+	keyPair, certPool := certificates.GetCert()
 
 	grpcServer := makeGRPCServer(certPool)
-	restMux, _ := getRestMux(certPool)
+	restMux, err := getRestMux(certPool)
+	if err != nil {
+		log.Panic(err)
+	}
 
-	// register core mux
+	// register root Http multiplexer (mux)
 	mux := http.NewServeMux()
-	mux.HandleFunc("/foobar/", simpleHttpHello)
+
+	// we can add any non-grpc endpoints here.
+	mux.HandleFunc("/foobar/", simpleHTTPHello)
+
+	// register the gateway mux onto the root path.
 	mux.Handle("/", restMux)
 
+	// the grpcHandlerFunc takes an grpc server and a http muxer and will
+	// route the request to the right place at runtime.
+	mergeHandler := grpcHandlerFunc(grpcServer, mux)
+
+	// configure TLS for our server. TLS is REQUIRED to make this setup work.
+	// check https://golang.org/src/net/http/server.go?s=69823:69872#L2666
 	srv := &http.Server{
-		Addr:    fmt.Sprintf("%v:%d", hostname, port),
-		Handler: grpcHandlerFunc(grpcServer, mux),
+		Addr:    serveAddress,
+		Handler: mergeHandler,
 		TLSConfig: &tls.Config{
 			Certificates: []tls.Certificate{*keyPair},
 			NextProtos:   []string{"h2"},
@@ -103,15 +125,15 @@ func main() {
 	}
 
 	// start listening on the socket
-	conn, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
+	// Note that if you listen on localhost:<port> you'll not be able to accept
+	// connections over the network. Change it to ":port"  if you want it.
+	conn, err := net.Listen("tcp", serveAddress)
 	if err != nil {
 		panic(err)
 	}
 
 	// start the server
-	// err = srv.Serve(conn)
-	fmt.Printf("grpc on port: %d\n", port)
-
+	fmt.Printf("starting GRPC and REST on: %v\n", serveAddress)
 	err = srv.Serve(tls.NewListener(conn, srv.TLSConfig))
 	if err != nil {
 		log.Fatalf("failed to serve: %v", err)
