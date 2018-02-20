@@ -4,10 +4,16 @@ package echoproto;
 import "google/api/annotations.proto";
 
 message EchoMessage {
- string value = 1;
+ string body = 2;
 }
 
 service EchoService {
+  rpc Hello(EchoMessage) returns (EchoMessage) {
+    option (google.api.http) = {
+      get: "/v1/hello"
+    };
+  }
+
   rpc Echo(EchoMessage) returns (EchoMessage) {
     option (google.api.http) = {
       post: "/v1/echo"

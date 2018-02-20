@@ -37,9 +37,15 @@ func main() {
 	if len(os.Args) > 1 {
 		name = os.Args[1]
 	}
-	r, err := c.Echo(context.Background(), &pb.EchoMessage{Value: name})
+	r1, err := c.Hello(context.Background(), &pb.EchoMessage{Body: name})
 	if err != nil {
 		log.Fatalf("could not greet: %v", err)
 	}
-	log.Printf("Greeting: %s", r.Value)
+	log.Printf(r1.Body)
+	r2, err := c.Echo(context.Background(), &pb.EchoMessage{Body: name})
+	if err != nil {
+		log.Fatalf("could not greet: %v", err)
+	}
+	log.Printf(r2.Body)
+
 }

@@ -40,13 +40,37 @@
           "EchoService"
         ]
       }
+    },
+    "/v1/hello": {
+      "get": {
+        "operationId": "Hello",
+        "responses": {
+          "200": {
+            "description": "",
+            "schema": {
+              "$ref": "#/definitions/echoprotoEchoMessage"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "body",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "EchoService"
+        ]
+      }
     }
   },
   "definitions": {
     "echoprotoEchoMessage": {
       "type": "object",
       "properties": {
-        "value": {
+        "body": {
           "type": "string"
         }
       }
