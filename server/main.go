@@ -119,7 +119,7 @@ func main() {
 	mergeHandler := grpcHandlerFunc(grpcServer, mux)
 
 	// configure TLS for our server. TLS is REQUIRED to make this setup work.
-	// check https://golang.org/src/net/http/server.go?s=69823:69872#L2666
+	// check https://golang.org/src/net/http/server.go?#L2746
 	srv := &http.Server{
 		Addr:    serveAddress,
 		Handler: mergeHandler,
