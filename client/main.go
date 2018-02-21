@@ -4,11 +4,9 @@ import (
 	"log"
 	"os"
 
-	"github.com/dhrp/grpc-rest-go-example/certificates"
 	pb "github.com/dhrp/grpc-rest-go-example/echo-proto"
 	"golang.org/x/net/context"
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/grpclog"
 )
 
@@ -18,13 +16,8 @@ const (
 )
 
 func main() {
-	keyPair, certPool := certificates.GetCert()
-	_ = keyPair
 
-	var opts []grpc.DialOption
-	creds := credentials.NewClientTLSFromCert(certPool, "localhost:8042")
-	opts = append(opts, grpc.WithTransportCredentials(creds))
-	conn, err := grpc.Dial(address, opts...)
+	conn, err := grpc.Dial(address, grpc.WithInsecure())
 	if err != nil {
 		grpclog.Fatalf("fail to dial: %v", err)
 	}

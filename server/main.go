@@ -1,21 +1,17 @@
 package main
 
 import (
-	"crypto/tls"
-	"crypto/x509"
 	"fmt"
 	"log"
 	"net"
 	"net/http"
 	"strings"
 
-	"github.com/grpc-ecosystem/grpc-gateway/runtime"
+	"github.com/soheilhy/cmux"
 	"golang.org/x/net/context"
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/reflection"
 
-	"github.com/dhrp/grpc-rest-go-example/certificates"
 	pb "github.com/dhrp/grpc-rest-go-example/echo-proto"
 )
 
@@ -40,48 +36,14 @@ func simpleHTTPHello(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte("this is a test endpoint"))
 }
 
-func makeGRPCServer(certPool *x509.CertPool) *grpc.Server {
-	opts := []grpc.ServerOption{
-		grpc.Creds(credentials.NewClientTLSFromCert(certPool, serveAddress))}
+func makeGRPCServer() *grpc.Server {
 
 	//setup grpc server
-	s := grpc.NewServer(opts...)
+	s := grpc.NewServer()
 	pb.RegisterEchoServiceServer(s, &server{})
 	// Register reflection service on gRPC server.
 	reflection.Register(s)
 	return s
-}
-
-// getRestMux initializes a new multiplexer, and registers each endpoint
-// - in this case only the EchoService
-
-func getRestMux(certPool *x509.CertPool, opts ...runtime.ServeMuxOption) (*runtime.ServeMux, error) {
-
-	// Because we run our REST endpoint on the same port as the GRPC the address is the same.
-	upstreamGRPCServerAddress := serveAddress
-
-	// get context, this allows control of the connection
-	ctx := context.Background()
-
-	// These credentials are for the upstream connection to the GRPC server
-	dcreds := credentials.NewTLS(&tls.Config{
-		ServerName: upstreamGRPCServerAddress,
-		RootCAs:    certPool,
-	})
-	dopts := []grpc.DialOption{grpc.WithTransportCredentials(dcreds)}
-
-	// Which multiplexer to register on.
-	// gwmux := runtime.NewServeMux()
-	gwmux := runtime.NewServeMux(runtime.WithMarshalerOption(runtime.MIMEWildcard,
-		&runtime.JSONPb{OrigName: true, EmitDefaults: true}))
-
-	err := pb.RegisterEchoServiceHandlerFromEndpoint(ctx, gwmux, upstreamGRPCServerAddress, dopts)
-	if err != nil {
-		fmt.Printf("serve: %v\n", err)
-		return nil, err
-	}
-
-	return gwmux, nil
 }
 
 // grpcHandlerFunc returns an http.Handler that delegates to grpcServer on incoming gRPC
@@ -96,51 +58,62 @@ func grpcHandlerFunc(grpcServer *grpc.Server, otherHandler http.Handler) http.Ha
 	})
 }
 
+func serveGRPC(l net.Listener) {
+
+	s := makeGRPCServer()
+
+	if err := s.Serve(l); err != nil {
+		log.Fatalf("While serving gRpc request: %v", err)
+	}
+}
+
+func serveHTTP(l net.Listener) {
+	if err := http.Serve(l, nil); err != nil {
+		log.Fatalf("While serving http request: %v", err)
+	}
+}
+
 func main() {
-	keyPair, certPool := certificates.GetCert()
 
-	grpcServer := makeGRPCServer(certPool)
-	restMux, err := getRestMux(certPool)
+	// Create a listener at the desired port.
+	l, err := net.Listen("tcp", serveAddress)
+	defer l.Close()
+
 	if err != nil {
-		log.Panic(err)
+		log.Fatal(err)
 	}
 
-	// register root Http multiplexer (mux)
-	mux := http.NewServeMux()
+	// Create a cmux object.
+	tcpm := cmux.New(l)
 
-	// we can add any non-grpc endpoints here.
-	mux.HandleFunc("/foobar/", simpleHTTPHello)
+	// Declare the match for different services required.
+	// Match connections in order:
+	// First grpc, then HTTP, and otherwise Go RPC/TCP.
+	grpcL := tcpm.Match(cmux.HTTP2HeaderField("content-type", "application/grpc"))
+	httpL := tcpm.Match(cmux.HTTP1Fast())
 
-	// register the gateway mux onto the root path.
-	mux.Handle("/", restMux)
+	// Link the endpoint to the handler function.
+	// http.HandleFunc("/query", queryHandler)
+	http.HandleFunc("/foobar/", simpleHTTPHello)
 
-	// the grpcHandlerFunc takes an grpc server and a http muxer and will
-	// route the request to the right place at runtime.
-	mergeHandler := grpcHandlerFunc(grpcServer, mux)
+	// Initialize the servers by passing in the custom listeners (sub-listeners).
+	go serveGRPC(grpcL)
+	go serveHTTP(httpL)
 
-	// configure TLS for our server. TLS is REQUIRED to make this setup work.
-	// check https://golang.org/src/net/http/server.go?#L2746
-	srv := &http.Server{
-		Addr:    serveAddress,
-		Handler: mergeHandler,
-		TLSConfig: &tls.Config{
-			Certificates: []tls.Certificate{*keyPair},
-			NextProtos:   []string{"h2"},
-		},
-	}
+	// Close the listener when done.
+	// go func() {
+	// 	<-closeCh
+	// 	// Stops listening further but already accepted connections are not closed.
+	// 	l.Close()
+	// }()
 
-	// start listening on the socket
-	// Note that if you listen on localhost:<port> you'll not be able to accept
-	// connections over the network. Change it to ":port"  if you want it.
-	conn, err := net.Listen("tcp", serveAddress)
-	if err != nil {
-		panic(err)
-	}
+	log.Println("grpc server started.")
+	log.Println("http server started.")
+	log.Println("Server listening on ", serveAddress)
 
-	// start the server
-	fmt.Printf("starting GRPC and REST on: %v\n", serveAddress)
-	err = srv.Serve(tls.NewListener(conn, srv.TLSConfig))
-	if err != nil {
-		log.Fatalf("failed to serve: %v", err)
+	// Start cmux serving.
+	if err := tcpm.Serve(); !strings.Contains(err.Error(),
+		"use of closed network connection") {
+		log.Fatal(err)
 	}
 }
