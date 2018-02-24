@@ -3,7 +3,7 @@ In this repository we show an example of how to make a service
 expose both a REST API and a gRPC API *on the same port*.
 
 This repository belongs together with an 
-[article](https://medium.com/@thatcher/making-rest-and-grpc-apis-share-one-port-bc0d351f2f84). The focus for 
+[article](https://medium.com/@thatcher/why-choose-between-grpc-and-rest-bc0d351f2f84). The focus for 
 this example is to get it to work on the same port.
 
 On the [master](https://github.com/dhrp/grpc-rest-go-example/tree/master) 
